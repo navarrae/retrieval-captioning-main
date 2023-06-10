@@ -1,0 +1,2 @@
+python infer.py --model_path experiments/norag_7M_gpt2 --checkpoint_path checkpoint-60000 
+
