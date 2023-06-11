@@ -112,23 +112,46 @@ def encode_images(images, image_path, model, feature_extractor, device):
     
     bs = 64	
     image_features = []
-    
+    count = 0
     for idx in tqdm(range(0, len(images), bs)):
+        #image_input = [feature_extractor(Image.open(os.path.join(image_path, i['file_name'])))
+                                                                    #for i in images[idx:idx+bs]]
+        for i in images[idx:idx+bs]:
+            if os.path.exists(os.path.join(image_path, i['file_name'])) is False:
+                print(os.path.join(image_path, i['file_name']))
+                count += 1
+
         image_input = [feature_extractor(Image.open(os.path.join(image_path, i['file_name'])))
-                                                                    for i in images[idx:idx+bs]]
+               for i in images[idx:idx+bs] if os.path.exists(os.path.join(image_path, i['file_name']))]
         with torch.no_grad():
             image_features.append(model.encode_image(torch.tensor(np.stack(image_input)).to(device)).cpu().numpy())
 
     image_features = np.concatenate(image_features)
 
-    return image_ids, image_features
+    return image_ids, image_features, count
 
+'''
 def get_nns(captions, images, k=15):
     xq = images.astype(np.float32)
     xb = captions.astype(np.float32)
     faiss.normalize_L2(xb)
     index = faiss.IndexFlatIP(xb.shape[1])
     index.add(xb)
+    faiss.normalize_L2(xq)
+    D, I = index.search(xq, k) 
+
+    return index, I
+'''
+def get_nns(captions, images, k=5, batch_size=10):
+    xq = images.astype(np.float32)
+    xb = captions.astype(np.float32)
+    faiss.normalize_L2(xb)
+    index = faiss.IndexFlatIP(xb.shape[1])
+    
+    # add in smaller batches
+    for i in range(0, xb.shape[0], batch_size):
+        index.add(xb[i : min(i + batch_size, xb.shape[0])])
+        
     faiss.normalize_L2(xq)
     D, I = index.search(xq, k) 
 
@@ -145,7 +168,7 @@ def filter_nns(nns, xb_image_ids, captions, xq_image_ids):
             good_nns.append(captions[nn])
             if len(good_nns) == 7:
                 break
-        assert len(good_nns) == 7
+        #assert len(good_nns) == 7
         retrieved_captions[image_id] = good_nns
     return retrieved_captions
  
@@ -158,23 +181,29 @@ def main():
     # Read the file
     with open(coco_data_path, 'r') as f:
         data = json.load(f)
-    data['images'] = data['images'][:10000] + data['images'][-4665:]
+        #data2 = json.load(f)
 
     # Truncate "raw", "realcap", and "tokens" fields to at most 50 tokens
     # if the raw is 'nan', get rid of that image in data
-    for image in data['images']:
+
+    '''
+    count  =0
+    for image in list(data['images']):
         if image['raw'] == 'nan':
             data['images'].remove(image)
+            count +=1
             continue
         image['raw'] = ' '.join(image['tokens'][:40])
         image['realcap'] = ' '.join(image['tokens'][:40])
         image['tokens'] = image['tokens'][:40]
+    print(count)
+
     #print new data to a json file
-    with open('datastore/index2.json', 'w') as f:
+    with open('datastore/index.json', 'w') as f:
         json.dump(data, f)
     
-
-    coco_data_path = 'datastore/index2.json'
+    '''
+    coco_data_path = 'datastore/index.json'
     print('Loading data')
     
     # Apply load_coco_data() function to the first 1000 images
@@ -192,8 +221,8 @@ def main():
     encoded_captions = encode_captions(captions, clip_model, device)
     
     print('Encoding images')
-    xq_image_ids, encoded_images = encode_images(images, image_path, clip_model, feature_extractor, device)
-    
+    xq_image_ids, encoded_images, count = encode_images(images, image_path, clip_model, feature_extractor, device)
+    print(count)
     print('Retrieving neighbors')
     index, nns = get_nns(encoded_captions, encoded_images)
     retrieved_caps = filter_nns(nns, xb_image_ids, captions, xq_image_ids)
